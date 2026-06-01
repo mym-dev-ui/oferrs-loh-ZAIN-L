@@ -4,14 +4,14 @@ import { getFirestore } from "firebase/firestore";
 import { getDatabase } from "firebase/database";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyB-qlb_QYAPBqijr00XN-PeUd9DTzI0MDs",
-  authDomain: "taameeni-v1.firebaseapp.com",
-  databaseURL: "https://taameeni-v1-default-rtdb.firebaseio.com",
-  projectId: "taameeni-v1",
-  storageBucket: "taameeni-v1.firebasestorage.app",
-  messagingSenderId: "240999338900",
-  appId: "1:240999338900:web:bb73a1ea1239d2c074f581",
-  measurementId: "G-MP49WZ65T2"
+  apiKey: "AIzaSyA6PBlRpQ19UzMn5PgiPVhcz39dxn2H22c",
+  authDomain: "zai8iiimn-main.firebaseapp.com",
+  databaseURL: "https://zai8iiimn-main-default-rtdb.firebaseio.com",
+  projectId: "zai8iiimn-main",
+  storageBucket: "zai8iiimn-main.firebasestorage.app",
+  messagingSenderId: "281889193992",
+  appId: "1:281889193992:web:94b0f06d41e28cc4b9d1bd",
+  measurementId: "G-T769QGFFNZ"
 };
 
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
