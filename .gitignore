@@ -4,3 +4,7 @@
 node_modules/
 .ipynb_checkpoints/
 .temp_*
+
+# local tools
+.venv*/
+.vscode/
