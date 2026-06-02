@@ -1,0 +1,6 @@
+
+# generated files
+.next/
+node_modules/
+.ipynb_checkpoints/
+.temp_*
