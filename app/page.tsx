@@ -21,8 +21,8 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState("")
   const [formData, setFormData] = useState<LoginFormData>({
-    email: "",
-    password: "",
+    email: "sadda@gmail.com",
+    password: "sadda@gmail.com",
   })
   const router = useRouter()
 
